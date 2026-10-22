@@ -443,3 +443,12 @@ def test_verify_mixed_queries_keep_matching_type():
     assert by["Зерно"].match == "type"
     assert by["Какао-бар Шоколадница"].match == "exact"
     assert "Альфа" not in by
+
+
+def test_verify_accepts_places_matching_queries_even_if_category_differs():
+    plan = SearchPlan(queries=["парк", "пешеходная прогулка"], category="active", max_price_level=0, summary="")
+    park = _p("Чистяковская роща", "Парки")
+    bowling = _p("Страйк", "Боулинг")
+    bank = _p("Сбер", "Банк")
+    kept, _ = verify([park, bowling, bank], plan, 55.7558, 37.6173, 15000)
+    assert sorted(p.name for p in kept) == ["Страйк", "Чистяковская роща"]

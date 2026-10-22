@@ -4,9 +4,9 @@ const PROVIDER_LABEL = { yandex: "Яндекс", "2gis": "2ГИС", google: "Goo
 const PRICE = { 1: "до 700 ₽", 2: "700–1500 ₽", 3: "1500–3000 ₽", 4: "от 3000 ₽" };
 
 const MATCH = {
-  exact: ["ok", "✓ Точно то, что искали"],
-  type: ["ok", "✓ Подходит"],
-  maybe: ["maybe", "⚠ Уточните перед поездкой"],
+  exact: ["ok", "🎯 Точно то, что искали"],
+  type: ["ok", "✅ Подходит"],
+  maybe: ["maybe", "⚠️ Уточните перед поездкой"],
 };
 
 function load(key) {
@@ -121,21 +121,43 @@ chipGroup("budget", "budget", Number);
 $("examples").addEventListener("click", (e) => {
   const btn = e.target.closest("button");
   if (!btn) return;
-  $("text").value = btn.textContent;
+  $("text").value = btn.dataset.q || btn.textContent;
+  syncClear();
   search();
+});
+
+/* ---------- Поле запроса: крестик очистки и Enter для поиска ---------- */
+
+function syncClear() {
+  $("clear").hidden = !$("text").value;
+}
+$("text").addEventListener("input", syncClear);
+$("text").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    search();
+  } else if (e.key === "Escape" && $("text").value) {
+    $("text").value = "";
+    syncClear();
+  }
+});
+$("clear").addEventListener("click", () => {
+  $("text").value = "";
+  syncClear();
+  $("text").focus();
 });
 
 function resetNearby() {
   state.coords = null;
   $("nearby").classList.remove("on");
-  $("nearby").textContent = "Рядом со мной";
+  $("nearby").textContent = "🧭 Рядом со мной";
   $("city").disabled = false;
   $("geoNote").hidden = true;
 }
 
 $("nearby").addEventListener("click", async () => {
   if (state.coords) return resetNearby();
-  $("nearby").textContent = "Определяю…";
+  $("nearby").textContent = "⏳ Определяю…";
   const me = await locate();
   if (!me) {
     resetNearby();
@@ -144,7 +166,7 @@ $("nearby").addEventListener("click", async () => {
   const { lat, lon, accuracy } = me;
   state.coords = { lat, lon };
   $("nearby").classList.add("on");
-  $("nearby").textContent = "Рядом ✓";
+  $("nearby").textContent = "📍 Рядом ✓";
   $("city").disabled = true;
   map.setView([lat, lon], 13);
   let city = "";
@@ -179,11 +201,12 @@ async function loadStatus() {
     const on = Object.entries(s.providers).filter(([, v]) => v).map(([k]) => PROVIDER_LABEL[k]);
     const st = $("status");
     if (s.demo) {
-      st.textContent = "Демо-режим";
+      st.textContent = "демо-режим";
       st.classList.add("demo");
       st.title = "Ключей карт нет, показываю выдуманные места. Добавь ключи в .env";
     } else {
-      st.textContent = on.join(" · ") || "Нет источников";
+      st.textContent = on.length ? "онлайн" : "нет источников";
+      st.title = `Источники: ${on.join(", ")}${s.ai ? ", нейросеть" : ""}`;
     }
   } catch {
     /* статус не критичен */
@@ -193,7 +216,7 @@ async function loadStatus() {
 async function search() {
   const btn = $("go");
   btn.disabled = true;
-  btn.textContent = "Ищу в картах…";
+  btn.innerHTML = "<span>Ищу и проверяю места</span>";
   const body = {
     text: $("text").value,
     food: $("foodField").hidden ? "" : $("food").value,
@@ -215,12 +238,28 @@ async function search() {
     render(data);
   } catch (err) {
     $("summary").hidden = false;
-    $("summary").innerHTML = `<div class="warn">${esc(err.message)}</div>`;
+    $("summary").innerHTML = `<div class="warn">😕 ${esc(err.message)}</div>`;
     $("results").innerHTML = "";
   } finally {
     btn.disabled = false;
-    btn.textContent = "Найти места";
+    btn.innerHTML = "<span>🔎 Найти места</span>";
   }
+}
+
+// Эмодзи по рубрике места: «Кофейни» → ☕, «Кинотеатр» → 🎬…
+const KIND_EMOJI = [
+  ["кофе", "☕"], ["кондитер", "🍰"], ["пекарн", "🥐"], ["мороженое", "🍦"], ["суши", "🍣"], ["пицц", "🍕"],
+  ["бургер", "🍔"], ["шашлы", "🍢"], ["стейк", "🥩"], ["фастфуд", "🌯"], ["питани", "🌯"], ["паб", "🍺"],
+  ["бар", "🍸"], ["ресторан", "🍽️"], ["кафе", "🍽️"], ["столов", "🍲"], ["кино", "🎬"], ["театр", "🎭"],
+  ["музе", "🏛️"], ["галере", "🖼️"], ["выстав", "🖼️"], ["парк", "🌳"], ["сад", "🌷"], ["набережн", "🌊"],
+  ["смотров", "🌇"], ["достопр", "📸"], ["каток", "⛸️"], ["боулинг", "🎳"], ["квест", "🔐"], ["караоке", "🎤"],
+  ["батут", "🤸"], ["картинг", "🏎️"], ["бильярд", "🎱"], ["скалодром", "🧗"], ["аквапарк", "🌊"], ["зоопарк", "🦒"],
+  ["игруш", "🧸"], ["подар", "🎁"], ["сувенир", "🎁"], ["цвет", "💐"], ["книг", "📚"], ["торгов", "🛍️"],
+  ["магазин", "🛍️"], ["клуб", "🪩"], ["планетари", "🔭"],
+];
+function kindEmoji(kind) {
+  const k = kind.toLowerCase();
+  return (KIND_EMOJI.find(([root]) => k.includes(root)) || [, "📍"])[1];
 }
 
 function priceText(p) {
@@ -244,12 +283,12 @@ function render(data) {
   const { plan, places, errors, demo, check, center } = data;
   const sum = $("summary");
   sum.hidden = false;
-  let html = `<b>${esc(plan.summary)}</b> · ${esc(center.name || "")}<br>`;
-  html += plan.parser === "rules" ? "" : `Запрос поняла нейросеть. `;
-  html += `Проверил ${check.checked} ${plural(check.checked, "место", "места", "мест")}, советую ${places.length}`;
+  let html = `<b>🔍 ${esc(plan.summary)}${center.name ? ` · ${esc(center.name)}` : ""}</b>`;
+  html += plan.parser === "rules" ? "" : `🤖 Запрос поняла нейросеть. `;
+  html += `✅ Проверил ${check.checked} ${plural(check.checked, "место", "места", "мест")}, советую ${places.length}`;
   const removed = Object.entries(check.removed);
   if (removed.length) html += `. Отсеял: ${removed.map(([why, n]) => `${esc(why)} — ${n}`).join(", ")}`;
-  if (check.widened_km) html += `<div class="warn">Рядом подходящих мест почти нет — расширил поиск до ${check.widened_km} км.</div>`;
+  if (check.widened_km) html += `<div class="warn">🔭 Рядом подходящих мест почти нет — расширил поиск до ${check.widened_km} км.</div>`;
   if (demo) html += `<div class="warn">Демо-режим: места выдуманы. Добавь API-ключи карт в файл .env, и появятся настоящие.</div>`;
   for (const [name, msg] of Object.entries(errors)) html += `<div class="warn">${esc(name)}: ${esc(msg)}</div>`;
   sum.innerHTML = html;
@@ -261,26 +300,31 @@ function render(data) {
   state.center = center;
   state.routeFor = -1;
   const list = $("results");
-  list.innerHTML = places.length ? "" : `<li class="empty">Ничего не нашлось. Попробуй описать иначе или убрать фильтр бюджета.</li>`;
+  list.innerHTML = places.length ? "" : `<li class="empty">🤷 Ничего не нашлось.<br>Попробуй описать иначе или убрать фильтр бюджета.</li>`;
 
   places.forEach((p, i) => {
     const n = i + 1;
-    const meta = [
-      p.kind && esc(p.kind),
-      p.rating && `<span class="rating">★ ${p.rating}</span>${p.reviews ? ` (${p.reviews.toLocaleString("ru-RU")})` : ""}`,
-      priceText(p),
-      p.distance_km != null && `${p.distance_km} км`,
-    ].filter(Boolean).join("</span><span>");
+    const tags = [
+      p.rating && `<span class="tag star">⭐ ${p.rating}${p.reviews ? ` · ${p.reviews.toLocaleString("ru-RU")} отз.` : ""}</span>`,
+      priceText(p) && `<span class="tag">💳 ${priceText(p)}</span>`,
+      p.distance_km != null && `<span class="tag">📏 ${p.distance_km} км</span>`,
+    ].filter(Boolean).join("");
 
     const li = document.createElement("li");
     li.className = "card";
     const [cls, label] = MATCH[p.match] || MATCH.type;
     li.innerHTML = `
-      <div class="top"><span class="num">${n}</span><span class="name">${esc(p.name)}</span></div>
-      <div class="meta"><span>${meta}</span></div>
-      ${p.address ? `<div class="meta">${esc(p.address)}</div>` : ""}
+      <div class="top">
+        <span class="num">${n}</span>
+        <div class="title">
+          <div class="name">${esc(p.name)}</div>
+          ${p.kind ? `<div class="kind">${kindEmoji(p.kind)} ${esc(p.kind)}</div>` : ""}
+        </div>
+      </div>
+      ${tags ? `<div class="tags">${tags}</div>` : ""}
+      ${p.address ? `<div class="addr">🏠 ${esc(p.address)}</div>` : ""}
       <div class="check ${cls}">${label}${p.why ? `: ${esc(p.why)}` : ""}</div>
-      ${p.warnings.map((w) => `<div class="check maybe">${esc(w)}</div>`).join("")}
+      ${p.warnings.map((w) => `<div class="check maybe">💡 ${esc(w)}</div>`).join("")}
       <div class="links">${linksHtml(p)}</div>
       <div class="routes" hidden></div>`;
     li.addEventListener("click", (e) => {
@@ -341,7 +385,7 @@ async function showRoutes(i) {
   const p = state.places[i];
   if (!box || !p) return;
   box.hidden = false;
-  box.innerHTML = `<div class="route-note">Строю маршруты…</div>`;
+  box.innerHTML = `<div class="route-note">🗺️ Строю маршруты…</div>`;
 
   let from = state.me || await locate();
   let fromNote = "от вас";
@@ -372,7 +416,7 @@ async function showRoutes(i) {
       </button>`).join("")}
     </div>
     <div class="route-info"></div>
-    <div class="route-note">Маршрут ${fromNote}</div>`;
+    <div class="route-note">📍 Маршрут ${fromNote}</div>`;
   const pick = (k) => {
     const r = routes[k];
     box.querySelectorAll(".route-mode").forEach((b) => b.classList.toggle("on", +b.dataset.k === k));

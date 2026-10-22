@@ -22,8 +22,8 @@ EXPECTED: dict[str, tuple[str, ...]] = {
     "cinema": ("кино", "cinema"),
     "theatre": ("театр",),
     "museum": ("музе", "галере", "выстав", "арт", "планетари"),
-    "park": ("парк", "сад", "сквер", "набережн", "бульвар"),
-    "active": ("боулинг", "каток", "скалодром", "батут", "картинг", "бильярд", "спорт", "развлеч",
+    "park": ("парк", "сад", "сквер", "набережн", "бульвар", "прогул", "аллея", "роща"),
+    "active": ("боулинг", "каток", "скалодром", "батут", "картинг", "бильярд", "спортцентр", "спортивн", "развлеч",
                "квест", "антикафе", "мастер", "аквапарк", "игров", "лазертаг", "пейнтбол", "клуб"),
     "quest": ("квест",),
     "karaoke": ("караоке",),
@@ -74,8 +74,7 @@ def implied_categories(plan: SearchPlan) -> set[str]:
     cats = set()
     for q in plan.queries:
         nq = _norm(q)
-        if nq in RULES:
-            cats |= {c for c, roots in EXPECTED.items() if any(r in nq for r in roots)}
+        cats |= {c for c, roots in EXPECTED.items() if any(r in nq for r in roots)}
     return cats
 
 
@@ -96,7 +95,7 @@ def verify(places: list[Place], plan: SearchPlan, lat: float, lon: float, radius
     category = plan.category
     # Точное название ищем только для покупок и свободных запросов; «стейк-хаус» — это тип места
     terms = item_terms(plan) if category in ("any", "shopping") else []
-    implied = implied_categories(plan) if category == "any" else set()
+    allowed = implied_categories(plan) | ({category} if category != "any" else set())
     removed: Counter[str] = Counter()
     kept: list[Place] = []
     this_year = date.today().year
@@ -113,11 +112,9 @@ def verify(places: list[Place], plan: SearchPlan, lat: float, lon: float, radius
 
         text = _norm(f"{p.name} {p.kind}")
         exact_hit = next((label for label, words in terms if all(w in text for w in words)), None)
-        if category == "any":
-            # Запрос без явного типа: место подходит, если подходит под тип хотя бы одной фразы
-            type_ok = any(_type_ok(p, c) for c in implied)
-        else:
-            type_ok = _type_ok(p, category)
+        # Место подходит, если подходит под выбранный тип или под тип хотя бы одной фразы поиска:
+        # нейросеть может назвать тип «активный отдых», а искать «парк»
+        type_ok = any(_type_ok(p, c) for c in allowed)
         why: list[str] = []
         warnings: list[str] = []
 
