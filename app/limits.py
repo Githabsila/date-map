@@ -13,18 +13,30 @@ _day = date.today()
 _calls_today = 0
 
 
-def allow_ip(ip: str) -> bool:
-    """Не больше SEARCHES_PER_IP поисков за SEARCH_WINDOW_S секунд с одного адреса."""
+def _allow(store: dict[str, deque[float]], ip: str, limit: int) -> bool:
     now = time.monotonic()
-    q = _per_ip.setdefault(ip, deque())
+    q = store.setdefault(ip, deque())
     while q and now - q[0] > config.SEARCH_WINDOW_S:
         q.popleft()
-    if len(q) >= config.SEARCHES_PER_IP:
+    if len(q) >= limit:
         return False
     q.append(now)
-    if len(_per_ip) > 10_000:
-        _per_ip.clear()
+    if len(store) > 10_000:
+        store.clear()
     return True
+
+
+def allow_ip(ip: str) -> bool:
+    """Не больше SEARCHES_PER_IP поисков за SEARCH_WINDOW_S секунд с одного адреса."""
+    return _allow(_per_ip, ip, config.SEARCHES_PER_IP)
+
+
+_routes_per_ip: dict[str, deque[float]] = {}
+
+
+def allow_route(ip: str) -> bool:
+    """Маршруты дешевле поиска, но бесплатные серверы маршрутов тоже просят не злоупотреблять."""
+    return _allow(_routes_per_ip, ip, config.SEARCHES_PER_IP * 4)
 
 
 def reserve_calls(n: int) -> bool:

@@ -389,3 +389,57 @@ def test_free_llm_failure_falls_back(monkeypatch):
     monkeypatch.setattr(llm, "_cache", llm.OrderedDict())
     client = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(429, json={})))
     assert asyncio.run(llm.llm_plan(SearchRequest(text="кино"), client)) is None
+
+
+# --- маршруты ---
+
+from app import routing
+
+
+def test_routes_from_osrm_and_estimates(monkeypatch):
+    monkeypatch.setattr(routing.cache, "_store", {})
+
+    def handler(request):
+        profile = request.url.path.split("/")[1].replace("routed-", "")
+        dist = {"car": 3000, "foot": 2000, "bike": 2200}[profile]
+        dur = {"car": 420, "foot": 1500, "bike": 600}[profile]
+        return httpx.Response(200, json={"code": "Ok", "routes": [{
+            "distance": dist, "duration": dur,
+            "geometry": {"coordinates": [[37.61, 55.75], [37.62, 55.76]]}}]})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    routes = {r["mode"]: r for r in asyncio.run(routing.build_routes((55.75, 37.61), (55.76, 37.62), client))}
+    assert list(routes) == ["foot", "bus", "car", "bike", "scooter"]
+    assert routes["car"]["exact"] and routes["car"]["duration_s"] == 420
+    assert routes["foot"]["geometry"][0] == [55.75, 37.61]  # [lat, lon] для Leaflet
+    assert routes["scooter"]["distance_m"] == 2200 and routes["scooter"]["duration_s"] < 600
+    assert not routes["bus"]["exact"] and "rtt=mt" in routes["bus"]["yandex"]
+    assert "rtt=sc" in routes["scooter"]["yandex"]
+
+
+def test_routes_fall_back_to_estimates(monkeypatch):
+    monkeypatch.setattr(routing.cache, "_store", {})
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(502)))
+    routes = asyncio.run(routing.build_routes((55.75, 37.61), (55.80, 37.61), client))
+    assert all(not r["exact"] and r["duration_s"] > 0 for r in routes)
+    foot = next(r for r in routes if r["mode"] == "foot")
+    assert foot["far"]  # 5.5 км по прямой ×1.3 — далеко для прогулки
+
+
+def test_route_api_rejects_far(monkeypatch):
+    from app.main import app
+    with TestClient(app) as c:
+        r = c.get("/api/route", params={"from_lat": 55.75, "from_lon": 37.61, "to_lat": 45.03, "to_lon": 38.97})
+    assert r.status_code == 400
+
+
+def test_verify_mixed_queries_keep_matching_type():
+    plan = SearchPlan(queries=["кофейня", "какао"], category="any", max_price_level=0, summary="")
+    coffee = _p("Зерно", "Кофейня")
+    cocoa = _p("Какао-бар Шоколадница", "Кафе")
+    bank = _p("Альфа", "Банк")
+    kept, _ = verify([coffee, cocoa, bank], plan, 55.7558, 37.6173, 15000)
+    by = {p.name: p for p in kept}
+    assert by["Зерно"].match == "type"
+    assert by["Какао-бар Шоколадница"].match == "exact"
+    assert "Альфа" not in by

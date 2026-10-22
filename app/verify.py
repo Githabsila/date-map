@@ -69,6 +69,16 @@ def item_terms(plan: SearchPlan) -> list[tuple[str, list[str]]]:
     return out
 
 
+def implied_categories(plan: SearchPlan) -> set[str]:
+    """Типы мест, которые следуют из фраз запроса: «кофейня» → coffee, «квест» → quest."""
+    cats = set()
+    for q in plan.queries:
+        nq = _norm(q)
+        if nq in RULES:
+            cats |= {c for c, roots in EXPECTED.items() if any(r in nq for r in roots)}
+    return cats
+
+
 def _type_ok(p: Place, category: str) -> bool:
     roots = EXPECTED.get(category)
     if not roots:
@@ -86,6 +96,7 @@ def verify(places: list[Place], plan: SearchPlan, lat: float, lon: float, radius
     category = plan.category
     # Точное название ищем только для покупок и свободных запросов; «стейк-хаус» — это тип места
     terms = item_terms(plan) if category in ("any", "shopping") else []
+    implied = implied_categories(plan) if category == "any" else set()
     removed: Counter[str] = Counter()
     kept: list[Place] = []
     this_year = date.today().year
@@ -102,7 +113,11 @@ def verify(places: list[Place], plan: SearchPlan, lat: float, lon: float, radius
 
         text = _norm(f"{p.name} {p.kind}")
         exact_hit = next((label for label, words in terms if all(w in text for w in words)), None)
-        type_ok = _type_ok(p, category)
+        if category == "any":
+            # Запрос без явного типа: место подходит, если подходит под тип хотя бы одной фразы
+            type_ok = any(_type_ok(p, c) for c in implied)
+        else:
+            type_ok = _type_ok(p, category)
         why: list[str] = []
         warnings: list[str] = []
 
@@ -111,6 +126,9 @@ def verify(places: list[Place], plan: SearchPlan, lat: float, lon: float, radius
             if exact_hit and (type_ok or category == "any"):
                 p.match = "exact"
                 why.append(f"в названии есть «{label}»")
+            elif type_ok and category == "any":
+                p.match = "type"
+                why.append(p.kind)
             elif exact_hit:
                 p.match = "maybe"
                 what = CATEGORY_NAME.get(category, "то, что нужно")

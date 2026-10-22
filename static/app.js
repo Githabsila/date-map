@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const state = { category: "any", budget: 0, coords: null, markers: [] };
+const state = { category: "any", budget: 0, coords: null, markers: [], places: [], center: null, me: null, routeFor: -1 };
 const PROVIDER_LABEL = { yandex: "Яндекс", "2gis": "2ГИС", google: "Google", osm: "OSM", demo: "демо" };
 const PRICE = { 1: "до 700 ₽", 2: "700–1500 ₽", 3: "1500–3000 ₽", 4: "от 3000 ₽" };
 
@@ -25,7 +25,82 @@ L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
 }).addTo(map);
 const layer = L.layerGroup().addTo(map);
-let meMarker = null;
+const meLayer = L.layerGroup().addTo(map);
+const routeLayer = L.layerGroup().addTo(map);
+let meWatch = null;
+
+/* ---------- Моё местоположение на карте ---------- */
+
+const LocateControl = L.Control.extend({
+  options: { position: "topleft" },
+  onAdd() {
+    const btn = L.DomUtil.create("button", "locate-btn");
+    btn.type = "button";
+    btn.title = "Показать, где я";
+    btn.setAttribute("aria-label", "Показать, где я");
+    btn.innerHTML = "◎";
+    L.DomEvent.disableClickPropagation(btn);
+    L.DomEvent.on(btn, "click", () => locate({ center: true }));
+    return btn;
+  },
+});
+map.addControl(new LocateControl());
+
+function drawMe() {
+  meLayer.clearLayers();
+  if (!state.me) return;
+  const { lat, lon, accuracy } = state.me;
+  if (accuracy < 3000) {
+    L.circle([lat, lon], { radius: accuracy, color: "#3b82f6", weight: 1, fillOpacity: 0.1, interactive: false }).addTo(meLayer);
+  }
+  L.marker([lat, lon], {
+    icon: L.divIcon({ className: "", html: '<div class="me-dot"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }),
+    zIndexOffset: 1000,
+  }).bindTooltip("Вы здесь").addTo(meLayer);
+}
+
+// Следим за местоположением, пока страница открыта: точка двигается вместе с человеком
+function locate({ center = false } = {}) {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation || !window.isSecureContext) {
+      showGeoNote("Браузер не даёт определить местоположение (нужен https).", true);
+      return resolve(null);
+    }
+    if (state.me) {
+      if (center) map.setView([state.me.lat, state.me.lon], Math.max(map.getZoom(), 14));
+      return resolve(state.me);
+    }
+    let first = true;
+    const onPos = (pos) => {
+      const { latitude: lat, longitude: lon, accuracy } = pos.coords;
+      state.me = { lat, lon, accuracy };
+      drawMe();
+      document.querySelector(".locate-btn")?.classList.add("on");
+      if (first) {
+        first = false;
+        if (center) map.setView([lat, lon], Math.max(map.getZoom(), 14));
+        resolve(state.me);
+      }
+    };
+    const onErr = (err) => {
+      if (meWatch !== null) navigator.geolocation.clearWatch(meWatch);
+      meWatch = null;
+      if (first) {
+        first = false;
+        const why = err.code === 1 ? "доступ к местоположению запрещён в настройках браузера" : "не получилось определить местоположение";
+        showGeoNote(`Не вышло: ${why}.`, true);
+        resolve(null);
+      }
+    };
+    if (meWatch !== null) navigator.geolocation.clearWatch(meWatch);
+    meWatch = navigator.geolocation.watchPosition(onPos, onErr, { timeout: 15000, enableHighAccuracy: true, maximumAge: 30000 });
+  });
+}
+
+// Если человек уже разрешал геолокацию раньше — сразу показываем его на карте, без вопросов
+navigator.permissions?.query({ name: "geolocation" }).then((p) => {
+  if (p.state === "granted") locate();
+}).catch(() => {});
 
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -56,45 +131,33 @@ function resetNearby() {
   $("nearby").textContent = "Рядом со мной";
   $("city").disabled = false;
   $("geoNote").hidden = true;
-  if (meMarker) { map.removeLayer(meMarker); meMarker = null; }
 }
 
-$("nearby").addEventListener("click", () => {
+$("nearby").addEventListener("click", async () => {
   if (state.coords) return resetNearby();
-  if (!navigator.geolocation) return showGeoNote("Браузер не умеет определять местоположение. Выбери город вручную.");
-  if (!window.isSecureContext) return showGeoNote("Геолокация работает только на сайте с https. Выбери город вручную.");
   $("nearby").textContent = "Определяю…";
-  navigator.geolocation.getCurrentPosition(
-    async (pos) => {
-      const { latitude: lat, longitude: lon, accuracy } = pos.coords;
-      state.coords = { lat, lon };
-      $("nearby").classList.add("on");
-      $("nearby").textContent = "Рядом ✓";
-      $("city").disabled = true;
-
-      // Показываем, где нас нашли: точка на карте и название города
-      if (meMarker) map.removeLayer(meMarker);
-      meMarker = L.circle([lat, lon], { radius: Math.min(accuracy, 5000), color: "#3b82f6", weight: 2, fillOpacity: 0.12 }).addTo(map);
-      map.setView([lat, lon], 13);
-      let city = "";
-      try {
-        city = (await (await fetch(`/api/nearest?lat=${lat}&lon=${lon}`)).json()).city || "";
-      } catch { /* без названия города тоже работаем */ }
-      if (city) $("city").value = city;
-      let note = city ? `📍 Ищу рядом с вами: ${esc(city)}` : "📍 Ищу рядом с вами";
-      if (accuracy > 20000) {
-        note += `<br>Браузер определил место очень примерно (±${Math.round(accuracy / 1000)} км). Если город не твой — нажми «Рядом ✓», чтобы выключить, и выбери город вручную.`;
-      }
-      showGeoNote(note, accuracy > 20000);
-      search();
-    },
-    (err) => {
-      resetNearby();
-      const why = err.code === 1 ? "доступ к местоположению запрещён в браузере" : "не получилось определить местоположение";
-      showGeoNote(`Не вышло: ${why}. Выбери город вручную.`, true);
-    },
-    { timeout: 15000, enableHighAccuracy: true, maximumAge: 60000 },
-  );
+  const me = await locate();
+  if (!me) {
+    resetNearby();
+    return;
+  }
+  const { lat, lon, accuracy } = me;
+  state.coords = { lat, lon };
+  $("nearby").classList.add("on");
+  $("nearby").textContent = "Рядом ✓";
+  $("city").disabled = true;
+  map.setView([lat, lon], 13);
+  let city = "";
+  try {
+    city = (await (await fetch(`/api/nearest?lat=${lat}&lon=${lon}`)).json()).city || "";
+  } catch { /* без названия города тоже работаем */ }
+  if (city) $("city").value = city;
+  let note = city ? `📍 Ищу рядом с вами: ${esc(city)}` : "📍 Ищу рядом с вами";
+  if (accuracy > 20000) {
+    note += `<br>Браузер определил место очень примерно (±${Math.round(accuracy / 1000)} км). Если город не твой — нажми «Рядом ✓», чтобы выключить, и выбери город вручную.`;
+  }
+  showGeoNote(note, accuracy > 20000);
+  search();
 });
 
 function showGeoNote(html, warn = false) {
@@ -192,7 +255,11 @@ function render(data) {
   sum.innerHTML = html;
 
   layer.clearLayers();
+  routeLayer.clearLayers();
   state.markers = [];
+  state.places = places;
+  state.center = center;
+  state.routeFor = -1;
   const list = $("results");
   list.innerHTML = places.length ? "" : `<li class="empty">Ничего не нашлось. Попробуй описать иначе или убрать фильтр бюджета.</li>`;
 
@@ -214,9 +281,10 @@ function render(data) {
       ${p.address ? `<div class="meta">${esc(p.address)}</div>` : ""}
       <div class="check ${cls}">${label}${p.why ? `: ${esc(p.why)}` : ""}</div>
       ${p.warnings.map((w) => `<div class="check maybe">${esc(w)}</div>`).join("")}
-      <div class="links">${linksHtml(p)}</div>`;
+      <div class="links">${linksHtml(p)}</div>
+      <div class="routes" hidden></div>`;
     li.addEventListener("click", (e) => {
-      if (e.target.closest("a")) return;
+      if (e.target.closest("a, .route-mode")) return;
       focusPlace(i);
     });
     list.appendChild(li);
@@ -227,7 +295,7 @@ function render(data) {
       <span style="color:#7b6d70">${[esc(p.kind), p.rating ? `★ ${p.rating}` : "", priceText(p)].filter(Boolean).join(" · ")}</span><br>
       ${esc(p.address)}
       <div class="links">${linksHtml(p)}</div>`);
-    marker.on("click", () => highlight(i));
+    marker.on("click", () => { highlight(i); showRoutes(i); });
     state.markers.push(marker);
   });
 
@@ -248,6 +316,86 @@ function focusPlace(i) {
   map.setView(m.getLatLng(), Math.max(map.getZoom(), 15));
   m.openPopup();
   highlight(i);
+  showRoutes(i);
+}
+
+/* ---------- Маршруты до выбранного места ---------- */
+
+const MODE_ICON = { foot: "🚶", bus: "🚌", car: "🚗", bike: "🚲", scooter: "🛴" };
+const MODE_COLOR = { foot: "#16a34a", bus: "#7c3aed", car: "#2563eb", bike: "#ea580c", scooter: "#db2777" };
+
+function fmtTime(s) {
+  const m = Math.max(1, Math.round(s / 60));
+  return m < 60 ? `${m} мин` : `${Math.floor(m / 60)} ч ${m % 60 ? `${m % 60} мин` : ""}`.trim();
+}
+function fmtDist(m) {
+  return m < 1000 ? `${Math.round(m / 10) * 10} м` : `${(m / 1000).toFixed(m < 10000 ? 1 : 0)} км`;
+}
+
+async function showRoutes(i) {
+  if (state.routeFor === i) return;
+  state.routeFor = i;
+  routeLayer.clearLayers();
+  document.querySelectorAll(".routes").forEach((r) => { r.hidden = true; r.innerHTML = ""; });
+  const box = document.querySelectorAll(".card")[i]?.querySelector(".routes");
+  const p = state.places[i];
+  if (!box || !p) return;
+  box.hidden = false;
+  box.innerHTML = `<div class="route-note">Строю маршруты…</div>`;
+
+  let from = state.me || await locate();
+  let fromNote = "от вас";
+  if (!from) {
+    from = state.center;
+    fromNote = `от центра (${esc(state.center?.name || "города")}) — включите геолокацию, чтобы считать от вас`;
+  }
+  if (state.routeFor !== i) return; // пока ждали, выбрали другое место
+
+  let routes;
+  try {
+    const q = new URLSearchParams({ from_lat: from.lat, from_lon: from.lon, to_lat: p.lat, to_lon: p.lon });
+    const r = await fetch(`/api/route?${q}`);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || "Не получилось построить маршрут");
+    routes = data.routes;
+  } catch (err) {
+    box.innerHTML = `<div class="route-note warn">${esc(err.message)}</div>`;
+    return;
+  }
+  if (state.routeFor !== i) return;
+
+  box.innerHTML = `
+    <div class="route-modes">${routes.map((r, k) => `
+      <button type="button" class="route-mode" data-k="${k}" title="${esc(r.label)}">
+        <span class="ico">${MODE_ICON[r.mode]}</span>
+        <span>${r.exact ? "" : "≈"}${fmtTime(r.duration_s)}</span>
+      </button>`).join("")}
+    </div>
+    <div class="route-info"></div>
+    <div class="route-note">Маршрут ${fromNote}</div>`;
+  const pick = (k) => {
+    const r = routes[k];
+    box.querySelectorAll(".route-mode").forEach((b) => b.classList.toggle("on", +b.dataset.k === k));
+    routeLayer.clearLayers();
+    const line = r.geometry || [[from.lat, from.lon], [p.lat, p.lon]];
+    const poly = L.polyline(line, {
+      color: MODE_COLOR[r.mode], weight: 5, opacity: 0.85,
+      dashArray: r.geometry ? (r.mode === "foot" ? "2 8" : null) : "6 10",
+    }).addTo(routeLayer);
+    // Всплывающее окно закрываем: всё нужное есть в карточке, а маршрут должен быть виден целиком
+    state.markers[i]?.closePopup();
+    map.fitBounds(poly.getBounds().pad(0.2), { maxZoom: 16 });
+    let info = `<b>${esc(r.label)}:</b> ${r.exact ? "" : "примерно "}${fmtTime(r.duration_s)}, ${fmtDist(r.distance_m)}`;
+    if (r.mode === "bus") info += "<br>Точный маршрут на транспорте с пересадками — в Яндекс Картах";
+    else if (!r.exact) info += "<br>Сервер маршрутов не ответил — время оценено по расстоянию";
+    if (r.far) info += "<br>Пешком далековато — может, лучше на транспорте?";
+    info += `<br><a href="${esc(r.yandex)}" target="_blank" rel="noopener">Открыть маршрут в Яндекс Картах →</a>`;
+    box.querySelector(".route-info").innerHTML = info;
+  };
+  box.querySelectorAll(".route-mode").forEach((b) => b.addEventListener("click", () => pick(+b.dataset.k)));
+  // Сразу показываем самый разумный вариант: пешком, если близко, иначе на машине
+  const near = routes.find((r) => r.mode === "foot").distance_m <= 2500;
+  pick(routes.findIndex((r) => r.mode === (near ? "foot" : "car")));
 }
 
 function plural(n, one, few, many) {

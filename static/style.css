@@ -132,6 +132,34 @@ input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px
 .check.maybe { color: var(--warn); }
 .geo { font-size: 13px; color: var(--muted); margin-top: -6px; }
 .geo.warn { padding: 8px 10px; border-radius: 8px; background: var(--warn-soft); color: var(--warn); margin-top: 0; }
+.locate-btn {
+  width: 34px; height: 34px; border: 2px solid rgba(0,0,0,.2); border-radius: 4px; background: #fff;
+  color: #333; font-size: 20px; line-height: 1; cursor: pointer; background-clip: padding-box;
+}
+.locate-btn:hover { background: #f4f4f4; }
+.locate-btn.on { color: #3b82f6; }
+.me-dot {
+  width: 18px; height: 18px; border-radius: 50%; background: #3b82f6; border: 3px solid #fff;
+  box-shadow: 0 0 0 2px rgba(59,130,246,.35), 0 1px 4px rgba(0,0,0,.4);
+  animation: me-pulse 2s ease-out infinite;
+}
+@keyframes me-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(59,130,246,.5), 0 1px 4px rgba(0,0,0,.4); }
+  100% { box-shadow: 0 0 0 14px rgba(59,130,246,0), 0 1px 4px rgba(0,0,0,.4); }
+}
+.routes { margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--line); display: grid; gap: 8px; }
+.route-modes { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.route-mode {
+  display: grid; justify-items: center; gap: 2px; padding: 6px 2px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--chip); font-size: 12px; cursor: pointer; white-space: nowrap;
+}
+.route-mode .ico { font-size: 18px; line-height: 1.1; }
+.route-mode:hover { border-color: var(--accent); }
+.route-mode.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.route-info { font-size: 13px; }
+.route-info a { color: var(--accent); }
+.route-note { font-size: 12px; color: var(--muted); }
+.route-note.warn { color: var(--warn); }
 .empty { color: var(--muted); padding: 20px 0; text-align: center; }
 
 .pin {
@@ -141,7 +169,8 @@ input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px
 }
 .pin span { transform: rotate(45deg); color: #fff; font: 700 11px system-ui, sans-serif; }
 .leaflet-popup-content { font: 14px/1.4 system-ui, sans-serif; }
-.leaflet-popup-content .links a { color: #2a2023; }
+.leaflet-popup-content .links a { color: #2a2023; background: #f4eeeb; }
+.leaflet-popup-content .links a:hover { color: #c8443f; background: #fbe9e6; }
 
 @media (max-width: 820px) {
   .layout { grid-template-columns: 1fr; grid-template-rows: 42vh auto; height: auto; }

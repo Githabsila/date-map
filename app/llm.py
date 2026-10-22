@@ -42,7 +42,7 @@ category — одно из: {", ".join(get_args(Category))}.
 
 # Сервис бесплатной нейросети определяем по виду ключа: так в настройках хватает одного LLM_API_KEY
 PRESETS = {
-    "gsk_": ("https://api.groq.com/openai/v1", "llama-3.1-8b-instant"),
+    "gsk_": ("https://api.groq.com/openai/v1", "openai/gpt-oss-20b"),
     "sk-or-": ("https://openrouter.ai/api/v1", "google/gemma-4-31b-it:free"),
 }
 
@@ -135,7 +135,7 @@ async def _free_plan(message: str, client: httpx.AsyncClient) -> SearchPlan | No
     body = {
         "model": model,
         "temperature": 0,
-        "max_tokens": 300,
+        "max_tokens": 1000,  # у рассуждающих моделей часть токенов уходит на размышления
         "messages": [
             {"role": "system", "content": SYSTEM + "\n" + JSON_FORMAT},
             {"role": "user", "content": message},
@@ -143,6 +143,8 @@ async def _free_plan(message: str, client: httpx.AsyncClient) -> SearchPlan | No
     }
     if "groq.com" in base:
         body["response_format"] = {"type": "json_object"}
+    if "gpt-oss" in model:
+        body["reasoning_effort"] = "low"  # запрос простой, долго думать не нужно
     try:
         r = await client.post(
             f"{base.rstrip('/')}/chat/completions",

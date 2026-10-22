@@ -9,9 +9,10 @@ from fastapi.staticfiles import StaticFiles
 from . import config, limits
 from .cities import CITIES, resolve_city
 from .llm import llm_plan, provider_name
-from .merge import order, prepare
+from .merge import distance_m, order, prepare
 from .models import SearchRequest
 from .parser import rule_based_plan
+from .routing import build_routes
 from .verify import verify
 from .providers import PAID, cache, enabled_providers, osm
 
@@ -108,6 +109,16 @@ async def gather_places(plan, lat: float, lon: float, radius: int):
         else:
             places += result
     return places, errors, providers
+
+
+@app.get("/api/route")
+async def route(from_lat: float, from_lon: float, to_lat: float, to_lon: float, request: Request):
+    assert http is not None
+    if not limits.allow_route(client_ip(request)):
+        raise HTTPException(429, "Слишком много маршрутов подряд. Подожди несколько минут.")
+    if distance_m(from_lat, from_lon, to_lat, to_lon) > 300_000:
+        raise HTTPException(400, "Слишком далеко для маршрута — больше 300 км.")
+    return {"routes": await build_routes((from_lat, from_lon), (to_lat, to_lon), http)}
 
 
 @app.get("/api/nearest")
