@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Куда сходить вдвоём</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="panel">
+      <header class="head">
+        <h1>Куда сходить вдвоём</h1>
+        <span id="status" class="status"></span>
+      </header>
+
+      <form id="form" class="form" autocomplete="off">
+        <label class="field">
+          <span class="label">Опиши, чего хочется</span>
+          <textarea id="text" rows="2" placeholder="Например: хочется чего-то мясного, но недорого"></textarea>
+        </label>
+        <div class="examples" id="examples">
+          <button type="button">Мясное, но недорого</button>
+          <button type="button">Красивый вид и вино</button>
+          <button type="button">Купить фигурку Hello Kitty</button>
+          <button type="button">Что-то активное</button>
+        </div>
+
+        <div class="row">
+          <label class="field grow">
+            <span class="label">Город</span>
+            <input id="city" list="cities" value="Москва">
+            <datalist id="cities"></datalist>
+          </label>
+          <button type="button" id="nearby" class="ghost">Рядом со мной</button>
+        </div>
+
+        <div class="field">
+          <span class="label">Куда</span>
+          <div class="chips" id="category">
+            <button type="button" data-v="any" class="on">Всё</button>
+            <button type="button" data-v="food">Поесть</button>
+            <button type="button" data-v="coffee">Кофе</button>
+            <button type="button" data-v="bar">Бар</button>
+            <button type="button" data-v="cinema">Кино</button>
+            <button type="button" data-v="theatre">Театр</button>
+            <button type="button" data-v="museum">Музеи</button>
+            <button type="button" data-v="park">Прогулка</button>
+            <button type="button" data-v="active">Активное</button>
+            <button type="button" data-v="quest">Квест</button>
+            <button type="button" data-v="karaoke">Караоке</button>
+            <button type="button" data-v="viewpoint">Красивый вид</button>
+            <button type="button" data-v="shopping">Купить</button>
+          </div>
+        </div>
+
+        <label class="field" id="foodField">
+          <span class="label">Что хочешь поесть</span>
+          <input id="food" placeholder="суши, пицца, грузинская кухня…">
+        </label>
+
+        <div class="field">
+          <span class="label">Бюджет на человека</span>
+          <div class="chips seg" id="budget">
+            <button type="button" data-v="0" class="on">Любой</button>
+            <button type="button" data-v="1">до 700 ₽</button>
+            <button type="button" data-v="2">до 1500 ₽</button>
+            <button type="button" data-v="3">до 3000 ₽</button>
+          </div>
+        </div>
+
+        <button type="submit" id="go" class="primary">Найти места</button>
+      </form>
+
+      <div id="summary" class="summary" hidden></div>
+      <ol id="results" class="results"></ol>
+    </aside>
+
+    <main id="map" class="map" aria-label="Карта"></main>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

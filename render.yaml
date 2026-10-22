@@ -1,0 +1,18 @@
+# Настройки для Render (render.com): New → Blueprint → выбрать этот репозиторий.
+services:
+  - type: web
+    name: date-map
+    runtime: docker
+    plan: free
+    healthCheckPath: /healthz
+    envVars:
+      - key: TWOGIS_API_KEY
+        sync: false   # значение вводится вручную в панели Render
+      - key: YANDEX_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: DAILY_PROVIDER_CALLS
+        value: "30"
+      - key: PLACES_DB_URL   # ссылка на places.db.gz (например, файл в GitHub Releases)
+        sync: false

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="test">
+  <node id="1" lat="55.7500" lon="37.6100" version="1"/>
+  <node id="2" lat="55.7510" lon="37.6100" version="1"/>
+  <node id="3" lat="55.7510" lon="37.6120" version="1"/>
+  <node id="4" lat="55.7500" lon="37.6120" version="1"/>
+  <node id="10" lat="55.7560" lon="37.6170" version="1">
+    <tag k="amenity" v="restaurant"/><tag k="name" v="Угли"/><tag k="cuisine" v="steak_house;grill"/>
+    <tag k="addr:street" v="Тверская улица"/><tag k="addr:housenumber" v="1"/>
+  </node>
+  <node id="11" lat="55.7570" lon="37.6180" version="1">
+    <tag k="shop" v="toys"/><tag k="name" v="Мир игрушек"/><tag k="brand" v="Hello Kitty"/>
+  </node>
+  <node id="12" lat="55.7580" lon="37.6190" version="1"><tag k="tourism" v="viewpoint"/></node>
+  <node id="13" lat="55.7590" lon="37.6200" version="1"><tag k="highway" v="bus_stop"/><tag k="name" v="Остановка"/></node>
+  <node id="20" lat="55.7558" lon="37.6173" version="1">
+    <tag k="place" v="city"/><tag k="name" v="Москва"/><tag k="population" v="13 000 000"/>
+  </node>
+  <way id="100" version="1">
+    <nd ref="1"/><nd ref="2"/><nd ref="3"/><nd ref="4"/><nd ref="1"/>
+    <tag k="leisure" v="park"/><tag k="name" v="Сквер у дома"/>
+  </way>
+</osm>

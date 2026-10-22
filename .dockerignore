@@ -1,0 +1,8 @@
+.venv
+.env
+.claude
+.pytest_cache
+__pycache__
+tests
+*.bat
+data
