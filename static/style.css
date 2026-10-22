@@ -12,6 +12,7 @@
   --warn: #a35a00;
   --warn-soft: #fff3e0;
   --shadow: 0 1px 2px rgba(42, 32, 35, .06), 0 4px 16px rgba(42, 32, 35, .06);
+  --scroll: rgba(200, 68, 63, .35);
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -29,6 +30,7 @@
     --warn: #f0b35a;
     --warn-soft: #33281a;
     --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 4px 16px rgba(0, 0, 0, .25);
+    --scroll: rgba(232, 101, 94, .4);
     color-scheme: dark;
   }
 }
@@ -44,6 +46,20 @@ button, input, textarea { font: inherit; color: inherit; }
 
 .layout { display: grid; grid-template-columns: 420px 1fr; height: 100vh; }
 .panel { overflow-y: auto; padding: 20px; border-right: 1px solid var(--line); background: var(--panel); }
+
+/* Тонкая полоса прокрутки в цветах сайта: без стрелок, с акцентным ползунком */
+@supports not selector(::-webkit-scrollbar) {
+  html, .panel, textarea { scrollbar-width: thin; scrollbar-color: var(--scroll) transparent; }
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--scroll); border-radius: 99px;
+  border: 3px solid transparent; background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--accent); background-clip: padding-box; }
 .map { height: 100%; position: relative; z-index: 0; }
 
 .head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
@@ -64,7 +80,7 @@ input, textarea {
   border-radius: 10px;
   background: var(--bg);
   outline: none;
-  resize: vertical;
+  resize: none;
 }
 input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 

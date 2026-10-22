@@ -60,6 +60,15 @@ def client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+@app.middleware("http")
+async def no_stale_page(request: Request, call_next):
+    # Саму страницу браузер всегда перепроверяет, чтобы после обновления не показывать старую версию
+    response = await call_next(request)
+    if request.url.path in ("/", "/index.html"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 @app.get("/healthz")
 async def healthz():
     return {"ok": True, "provider_calls_today": limits.calls_today()}
