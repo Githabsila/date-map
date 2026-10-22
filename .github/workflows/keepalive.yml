@@ -1,0 +1,11 @@
+# Бесплатный «будильник»: раз в 10 минут заходит на сайт, чтобы бесплатный сервер Render не засыпал.
+name: keepalive
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -fsS --max-time 90 --retry 2 https://date-map.onrender.com/healthz
