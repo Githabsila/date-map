@@ -182,6 +182,7 @@ function render(data) {
   const sum = $("summary");
   sum.hidden = false;
   let html = `<b>${esc(plan.summary)}</b> · ${esc(center.name || "")}<br>`;
+  html += plan.parser === "rules" ? "" : `Запрос поняла нейросеть. `;
   html += `Проверил ${check.checked} ${plural(check.checked, "место", "места", "мест")}, советую ${places.length}`;
   const removed = Object.entries(check.removed);
   if (removed.length) html += `. Отсеял: ${removed.map(([why, n]) => `${esc(why)} — ${n}`).join(", ")}`;

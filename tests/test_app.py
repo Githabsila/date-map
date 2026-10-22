@@ -146,7 +146,7 @@ def test_yandex_parsing(monkeypatch):
 # --- весь сайт в демо-режиме ---
 
 def test_api_demo_mode(monkeypatch):
-    for k in ("YANDEX_API_KEY", "TWOGIS_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY"):
+    for k in ("YANDEX_API_KEY", "TWOGIS_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY", "LLM_API_KEY"):
         monkeypatch.setattr(config, k, "")
     monkeypatch.setattr(config, "OSM_DB", config.ROOT / "no-such.db")
     from app.main import app
@@ -178,7 +178,7 @@ def test_ip_limit_and_daily_budget(monkeypatch):
 
 
 def test_api_rate_limited(monkeypatch):
-    for k in ("YANDEX_API_KEY", "TWOGIS_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY"):
+    for k in ("YANDEX_API_KEY", "TWOGIS_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY", "LLM_API_KEY"):
         monkeypatch.setattr(config, k, "")
     monkeypatch.setattr(config, "OSM_DB", config.ROOT / "no-such.db")
     monkeypatch.setattr(config, "SEARCHES_PER_IP", 1)
@@ -231,7 +231,7 @@ def test_osm_search(osm_db):
 
 
 def test_api_uses_osm_and_skips_paid_when_budget_spent(osm_db, monkeypatch):
-    for k in ("YANDEX_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY"):
+    for k in ("YANDEX_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY", "LLM_API_KEY"):
         monkeypatch.setattr(config, k, "")
     monkeypatch.setattr(config, "TWOGIS_API_KEY", "test")
     monkeypatch.setattr(config, "DAILY_PROVIDER_CALLS", 1)
@@ -299,7 +299,7 @@ def test_verify_warns_about_stale_osm_data():
 def test_nearest_city_and_api_reports_check(osm_db, monkeypatch):
     from app.providers import osm
     assert osm.nearest_city(55.76, 37.62) == "Москва"
-    for k in ("YANDEX_API_KEY", "TWOGIS_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY"):
+    for k in ("YANDEX_API_KEY", "TWOGIS_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY", "LLM_API_KEY"):
         monkeypatch.setattr(config, k, "")
     from app.main import app
     with TestClient(app) as c:
@@ -323,7 +323,7 @@ def test_verify_drops_ticket_offices_and_flags_odd_descriptors():
 
 
 def test_search_widens_radius_when_nothing_near(osm_db, monkeypatch):
-    for k in ("YANDEX_API_KEY", "TWOGIS_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY"):
+    for k in ("YANDEX_API_KEY", "TWOGIS_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY", "LLM_API_KEY"):
         monkeypatch.setattr(config, k, "")
     from app.main import app
     with TestClient(app) as c:
@@ -331,3 +331,61 @@ def test_search_widens_radius_when_nothing_near(osm_db, monkeypatch):
         r = c.post("/api/search", json={"text": "стейк", "lat": 55.98, "lon": 37.6173}).json()
     assert r["check"]["widened_km"] == 40
     assert [p["name"] for p in r["places"]] == ["Угли"]
+
+
+# --- бесплатная нейросеть ---
+
+from app import llm
+
+
+def test_parse_plan_json_handles_messy_answers():
+    p = llm.parse_plan_json('Вот ответ:\n```json\n{"queries": "корейский ресторан", "category": "food", '
+                            '"max_price_level": "1", "summary": "Корейская еда"}\n```')
+    assert p.queries == ["корейский ресторан"] and p.category == "food" and p.max_price_level == 1
+    assert llm.parse_plan_json('{"queries": ["кино"], "category": "movies"}').category == "any"
+    assert llm.parse_plan_json("не знаю") is None
+    assert llm.parse_plan_json('{"queries": [}') is None
+
+
+def test_free_llm_presets(monkeypatch):
+    monkeypatch.setattr(config, "LLM_BASE_URL", "")
+    monkeypatch.setattr(config, "LLM_MODEL", "")
+    monkeypatch.setattr(config, "LLM_API_KEY", "gsk_test")
+    assert llm.free_llm_settings()[0] == "https://api.groq.com/openai/v1"
+    monkeypatch.setattr(config, "LLM_API_KEY", "sk-or-test")
+    assert llm.free_llm_settings()[0] == "https://openrouter.ai/api/v1"
+    monkeypatch.setattr(config, "LLM_MODEL", "my-model")
+    assert llm.free_llm_settings()[1] == "my-model"
+
+
+def test_free_llm_plan_with_cache_and_ui_filters(monkeypatch):
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "")
+    monkeypatch.setattr(config, "LLM_API_KEY", "gsk_test")
+    monkeypatch.setattr(config, "LLM_BASE_URL", "")
+    monkeypatch.setattr(config, "LLM_MODEL", "")
+    monkeypatch.setattr(llm, "_cache", llm.OrderedDict())
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        assert request.url.path == "/openai/v1/chat/completions"
+        assert request.headers["authorization"] == "Bearer gsk_test"
+        content = '{"queries": ["корейский ресторан", "кафе корейской кухни"], "category": "food", ' \
+                  '"max_price_level": 2, "summary": "Ищу корейскую еду"}'
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    req = SearchRequest(text="корейские вкусняшки", max_price_level=1)
+    plan = asyncio.run(llm.llm_plan(req, client))
+    again = asyncio.run(llm.llm_plan(req, client))
+    assert plan.queries == ["корейский ресторан", "кафе корейской кухни"]
+    assert plan.max_price_level == 1  # бюджет из фильтра важнее догадки модели
+    assert again.queries == plan.queries and len(calls) == 1  # второй раз — из кэша
+
+
+def test_free_llm_failure_falls_back(monkeypatch):
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "")
+    monkeypatch.setattr(config, "LLM_API_KEY", "gsk_test")
+    monkeypatch.setattr(llm, "_cache", llm.OrderedDict())
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(429, json={})))
+    assert asyncio.run(llm.llm_plan(SearchRequest(text="кино"), client)) is None

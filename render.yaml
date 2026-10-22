@@ -10,6 +10,8 @@ services:
         sync: false   # значение вводится вручную в панели Render
       - key: YANDEX_API_KEY
         sync: false
+      - key: LLM_API_KEY     # бесплатная нейросеть: ключ Groq или OpenRouter
+        sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: DAILY_PROVIDER_CALLS

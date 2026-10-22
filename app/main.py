@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import config, limits
 from .cities import CITIES, resolve_city
-from .llm import llm_plan
+from .llm import llm_plan, provider_name
 from .merge import order, prepare
 from .models import SearchRequest
 from .parser import rule_based_plan
@@ -40,7 +40,7 @@ app = FastAPI(title="Куда сходить вдвоём", lifespan=lifespan, d
 async def status():
     return {
         "demo": config.demo_mode(),
-        "ai": bool(config.ANTHROPIC_API_KEY),
+        "ai": provider_name() is not None,
         "providers": {
             "osm": osm.available(),
             "yandex": bool(config.YANDEX_API_KEY),
@@ -131,8 +131,8 @@ async def search(req: SearchRequest, request: Request):
         lat, lon = coords
         radius = config.CITY_RADIUS_M
 
-    plan = await llm_plan(req)
-    parser = "claude"
+    plan = await llm_plan(req, http)
+    parser = {"claude": "claude", "free": "ai"}.get(provider_name() or "", "rules")
     if plan is None:
         plan = rule_based_plan(req)
         parser = "rules"

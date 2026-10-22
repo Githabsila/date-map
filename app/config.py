@@ -17,6 +17,13 @@ GOOGLE_API_KEY = _env("GOOGLE_API_KEY")
 ANTHROPIC_API_KEY = _env("ANTHROPIC_API_KEY")
 CLAUDE_MODEL = _env("CLAUDE_MODEL") or "claude-opus-5-5"
 
+# Бесплатная нейросеть с OpenAI-совместимым API (Groq, OpenRouter…). Адрес и модель для ключей
+# Groq (gsk_…) и OpenRouter (sk-or-…) подставляются сами; для других сервисов задай их вручную.
+LLM_API_KEY = _env("LLM_API_KEY")
+LLM_BASE_URL = _env("LLM_BASE_URL")
+LLM_MODEL = _env("LLM_MODEL")
+LLM_TIMEOUT_S = 12.0
+
 # Своя база мест из OpenStreetMap (scripts/build_osm_db.py). Нет файла — источник выключен.
 OSM_DB = Path(_env("OSM_DB") or ROOT / "data" / "places.db")
 

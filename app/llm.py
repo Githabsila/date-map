@@ -1,10 +1,20 @@
-"""Разбор свободного запроса через Claude. Если ключа нет или запрос не удался, возвращает None."""
+"""Разбор свободного запроса нейросетью.
+
+Порядок: Claude (если есть ANTHROPIC_API_KEY) → бесплатная нейросеть с OpenAI-совместимым API
+(LLM_API_KEY: Groq, OpenRouter и т.п.) → None, и тогда работает разбор по ключевым словам.
+"""
+import json
 import logging
+import re
+from collections import OrderedDict
+from typing import get_args
 
 import anthropic
+import httpx
+from pydantic import ValidationError
 
 from . import config
-from .models import SearchPlan, SearchRequest
+from .models import Category, SearchPlan, SearchRequest
 
 log = logging.getLogger(__name__)
 
@@ -22,23 +32,25 @@ max_price_level: средний чек на человека. 0 — бюджет
 summary: одна короткая фраза по-русски, что ищем, например «Ищу недорогие мясные места».
 Если запрос вообще не про места, всё равно предложи идеи для свидания."""
 
-_client: anthropic.AsyncAnthropic | None = None
+# Небольшие бесплатные модели не умеют строгие схемы, поэтому формат описываем словами и примером
+JSON_FORMAT = f"""
+Ответь ТОЛЬКО JSON-объектом без пояснений и без markdown, ровно с такими полями:
+{{"queries": ["..."], "category": "...", "max_price_level": 0, "summary": "..."}}
+category — одно из: {", ".join(get_args(Category))}.
+Пример: запрос «хочется чего-то мясного но недорого» →
+{{"queries": ["стейк-хаус", "шашлычная"], "category": "food", "max_price_level": 1, "summary": "Ищу недорогие мясные места"}}"""
+
+# Сервис бесплатной нейросети определяем по виду ключа: так в настройках хватает одного LLM_API_KEY
+PRESETS = {
+    "gsk_": ("https://api.groq.com/openai/v1", "llama-3.1-8b-instant"),
+    "sk-or-": ("https://openrouter.ai/api/v1", "google/gemma-4-31b-it:free"),
+}
+
+_claude: anthropic.AsyncAnthropic | None = None
+_cache: OrderedDict[str, SearchPlan] = OrderedDict()
 
 
-def _get_client() -> anthropic.AsyncAnthropic | None:
-    global _client
-    if not config.ANTHROPIC_API_KEY:
-        return None
-    if _client is None:
-        _client = anthropic.AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY, timeout=20.0, max_retries=1)
-    return _client
-
-
-async def llm_plan(req: SearchRequest) -> SearchPlan | None:
-    client = _get_client()
-    if client is None or not (req.text.strip() or req.food.strip()):
-        return None
-
+def _user_message(req: SearchRequest) -> str:
     parts = [f"Запрос: {req.text.strip() or '—'}"]
     if req.food.strip():
         parts.append(f"Что хочет поесть: {req.food.strip()}")
@@ -46,16 +58,38 @@ async def llm_plan(req: SearchRequest) -> SearchPlan | None:
         parts.append(f"Выбранный в фильтре тип места: {req.category}")
     if req.max_price_level:
         parts.append(f"Выбранный в фильтре бюджет: уровень {req.max_price_level}")
+    return "\n".join(parts)
 
+
+def provider_name() -> str | None:
+    if config.ANTHROPIC_API_KEY:
+        return "claude"
+    if config.LLM_API_KEY:
+        return "free"
+    return None
+
+
+def free_llm_settings() -> tuple[str, str]:
+    base, model = config.LLM_BASE_URL, config.LLM_MODEL
+    for prefix, (preset_base, preset_model) in PRESETS.items():
+        if config.LLM_API_KEY.startswith(prefix):
+            base, model = base or preset_base, model or preset_model
+    return base, model
+
+
+async def _claude_plan(message: str) -> SearchPlan | None:
+    global _claude
+    if _claude is None:
+        _claude = anthropic.AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY, timeout=20.0, max_retries=1)
     try:
-        response = await client.beta.messages.parse(
+        response = await _claude.beta.messages.parse(
             model=config.CLAUDE_MODEL,
             max_tokens=2000,
             system=SYSTEM,
             output_config={"effort": "low"},
             betas=["server-side-fallback-2026-07-01"],
             fallbacks="default",
-            messages=[{"role": "user", "content": "\n".join(parts)}],
+            messages=[{"role": "user", "content": message}],
             output_format=SearchPlan,
         )
     except anthropic.AuthenticationError:
@@ -70,10 +104,89 @@ async def llm_plan(req: SearchRequest) -> SearchPlan | None:
     except anthropic.APIConnectionError:
         log.warning("Claude: нет соединения")
         return None
-
-    if response.stop_reason == "refusal" or response.parsed_output is None:
+    if response.stop_reason == "refusal":
         return None
-    plan = response.parsed_output
+    return response.parsed_output
+
+
+def parse_plan_json(text: str) -> SearchPlan | None:
+    """Достаёт JSON из ответа модели (бывает обёрнут в ```json … ``` или с текстом вокруг) и проверяет его."""
+    m = re.search(r"\{.*\}", text, re.S)
+    if not m:
+        return None
+    try:
+        data = json.loads(m.group(0))
+        if isinstance(data.get("queries"), str):
+            data["queries"] = [data["queries"]]
+        if data.get("category") not in get_args(Category):
+            data["category"] = "any"
+        data["max_price_level"] = int(data.get("max_price_level") or 0)
+        data.setdefault("summary", "")
+        return SearchPlan.model_validate(data)
+    except (json.JSONDecodeError, ValidationError, ValueError, TypeError, AttributeError):
+        return None
+
+
+async def _free_plan(message: str, client: httpx.AsyncClient) -> SearchPlan | None:
+    base, model = free_llm_settings()
+    if not base or not model:
+        log.warning("Бесплатная нейросеть: не задан LLM_BASE_URL/LLM_MODEL для этого ключа")
+        return None
+    body = {
+        "model": model,
+        "temperature": 0,
+        "max_tokens": 300,
+        "messages": [
+            {"role": "system", "content": SYSTEM + "\n" + JSON_FORMAT},
+            {"role": "user", "content": message},
+        ],
+    }
+    if "groq.com" in base:
+        body["response_format"] = {"type": "json_object"}
+    try:
+        r = await client.post(
+            f"{base.rstrip('/')}/chat/completions",
+            headers={"Authorization": f"Bearer {config.LLM_API_KEY}"},
+            json=body,
+            timeout=config.LLM_TIMEOUT_S,
+        )
+    except httpx.HTTPError as e:
+        log.warning("Бесплатная нейросеть: нет ответа (%r)", e)
+        return None
+    if r.status_code != 200:
+        log.warning("Бесплатная нейросеть: HTTP %s %s", r.status_code, r.text[:200])
+        return None
+    try:
+        text = r.json()["choices"][0]["message"]["content"] or ""
+    except (ValueError, KeyError, IndexError, TypeError):
+        return None
+    plan = parse_plan_json(text)
+    if plan is None:
+        log.warning("Бесплатная нейросеть: не удалось разобрать ответ: %s", text[:200])
+    return plan
+
+
+async def llm_plan(req: SearchRequest, client: httpx.AsyncClient | None = None) -> SearchPlan | None:
+    provider = provider_name()
+    if provider is None or not (req.text.strip() or req.food.strip()):
+        return None
+
+    message = _user_message(req)
+    if message in _cache:  # одинаковые запросы не тратят лимит нейросети
+        _cache.move_to_end(message)
+        return _cache[message].model_copy(deep=True)
+
+    if provider == "claude":
+        plan = await _claude_plan(message)
+    else:
+        if client is None:
+            async with httpx.AsyncClient() as own:
+                plan = await _free_plan(message, own)
+        else:
+            plan = await _free_plan(message, client)
+    if plan is None:
+        return None
+
     plan.queries = [q.strip() for q in plan.queries if q.strip()][: config.MAX_QUERIES]
     if not plan.queries:
         return None
@@ -83,4 +196,8 @@ async def llm_plan(req: SearchRequest) -> SearchPlan | None:
     if req.max_price_level:
         plan.max_price_level = req.max_price_level
     plan.max_price_level = max(0, min(4, plan.max_price_level))
+
+    _cache[message] = plan.model_copy(deep=True)
+    if len(_cache) > 500:
+        _cache.popitem(last=False)
     return plan
