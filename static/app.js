@@ -3,12 +3,29 @@ const state = { category: "any", budget: 0, coords: null, markers: [] };
 const PROVIDER_LABEL = { yandex: "Яндекс", "2gis": "2ГИС", google: "Google", osm: "OSM", demo: "демо" };
 const PRICE = { 1: "до 700 ₽", 2: "700–1500 ₽", 3: "1500–3000 ₽", 4: "от 3000 ₽" };
 
-const map = L.map("map", { zoomControl: true }).setView([55.7558, 37.6173], 11);
+const MATCH = {
+  exact: ["ok", "✓ Точно то, что искали"],
+  type: ["ok", "✓ Подходит"],
+  maybe: ["maybe", "⚠ Уточните перед поездкой"],
+};
+
+function load(key) {
+  try { return JSON.parse(localStorage.getItem(key)); } catch { return null; }
+}
+function save(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* хранилище недоступно */ }
+}
+
+// Карта открывается там, где искали в прошлый раз, а не всегда в Москве
+const last = load("lastView");
+const map = L.map("map", { zoomControl: true }).setView(last ? [last.lat, last.lon] : [55.7558, 37.6173], last ? 12 : 11);
+if (load("city")) $("city").value = load("city");
 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 19,
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
 }).addTo(map);
 const layer = L.layerGroup().addTo(map);
+let meMarker = null;
 
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -33,30 +50,59 @@ $("examples").addEventListener("click", (e) => {
   search();
 });
 
+function resetNearby() {
+  state.coords = null;
+  $("nearby").classList.remove("on");
+  $("nearby").textContent = "Рядом со мной";
+  $("city").disabled = false;
+  $("geoNote").hidden = true;
+  if (meMarker) { map.removeLayer(meMarker); meMarker = null; }
+}
+
 $("nearby").addEventListener("click", () => {
-  if (state.coords) {
-    state.coords = null;
-    $("nearby").classList.remove("on");
-    $("nearby").textContent = "Рядом со мной";
-    $("city").disabled = false;
-    return;
-  }
-  if (!navigator.geolocation) return alert("Браузер не умеет определять местоположение");
+  if (state.coords) return resetNearby();
+  if (!navigator.geolocation) return showGeoNote("Браузер не умеет определять местоположение. Выбери город вручную.");
+  if (!window.isSecureContext) return showGeoNote("Геолокация работает только на сайте с https. Выбери город вручную.");
   $("nearby").textContent = "Определяю…";
   navigator.geolocation.getCurrentPosition(
-    (pos) => {
-      state.coords = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+    async (pos) => {
+      const { latitude: lat, longitude: lon, accuracy } = pos.coords;
+      state.coords = { lat, lon };
       $("nearby").classList.add("on");
       $("nearby").textContent = "Рядом ✓";
       $("city").disabled = true;
+
+      // Показываем, где нас нашли: точка на карте и название города
+      if (meMarker) map.removeLayer(meMarker);
+      meMarker = L.circle([lat, lon], { radius: Math.min(accuracy, 5000), color: "#3b82f6", weight: 2, fillOpacity: 0.12 }).addTo(map);
+      map.setView([lat, lon], 13);
+      let city = "";
+      try {
+        city = (await (await fetch(`/api/nearest?lat=${lat}&lon=${lon}`)).json()).city || "";
+      } catch { /* без названия города тоже работаем */ }
+      if (city) $("city").value = city;
+      let note = city ? `📍 Ищу рядом с вами: ${esc(city)}` : "📍 Ищу рядом с вами";
+      if (accuracy > 20000) {
+        note += `<br>Браузер определил место очень примерно (±${Math.round(accuracy / 1000)} км). Если город не твой — нажми «Рядом ✓», чтобы выключить, и выбери город вручную.`;
+      }
+      showGeoNote(note, accuracy > 20000);
+      search();
     },
-    () => {
-      $("nearby").textContent = "Рядом со мной";
-      alert("Не получилось определить местоположение. Выбери город вручную.");
+    (err) => {
+      resetNearby();
+      const why = err.code === 1 ? "доступ к местоположению запрещён в браузере" : "не получилось определить местоположение";
+      showGeoNote(`Не вышло: ${why}. Выбери город вручную.`, true);
     },
-    { timeout: 10000 },
+    { timeout: 15000, enableHighAccuracy: true, maximumAge: 60000 },
   );
 });
+
+function showGeoNote(html, warn = false) {
+  const el = $("geoNote");
+  el.hidden = false;
+  el.className = warn ? "geo warn" : "geo";
+  el.innerHTML = html;
+}
 
 $("form").addEventListener("submit", (e) => {
   e.preventDefault();
@@ -101,6 +147,8 @@ async function search() {
     });
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || "Ошибка поиска");
+    if (!state.coords) save("city", body.city);
+    save("lastView", { lat: data.center.lat, lon: data.center.lon });
     render(data);
   } catch (err) {
     $("summary").hidden = false;
@@ -130,11 +178,14 @@ function linksHtml(p) {
 }
 
 function render(data) {
-  const { plan, places, errors, demo } = data;
+  const { plan, places, errors, demo, check, center } = data;
   const sum = $("summary");
   sum.hidden = false;
-  let html = `<b>${esc(plan.summary)}</b><br>Нашёл ${places.length} ${plural(places.length, "место", "места", "мест")}`;
-  html += ` · ${plan.parser === "claude" ? "запрос понял Claude" : "разбор по ключевым словам"}`;
+  let html = `<b>${esc(plan.summary)}</b> · ${esc(center.name || "")}<br>`;
+  html += `Проверил ${check.checked} ${plural(check.checked, "место", "места", "мест")}, советую ${places.length}`;
+  const removed = Object.entries(check.removed);
+  if (removed.length) html += `. Отсеял: ${removed.map(([why, n]) => `${esc(why)} — ${n}`).join(", ")}`;
+  if (check.widened_km) html += `<div class="warn">Рядом подходящих мест почти нет — расширил поиск до ${check.widened_km} км.</div>`;
   if (demo) html += `<div class="warn">Демо-режим: места выдуманы. Добавь API-ключи карт в файл .env, и появятся настоящие.</div>`;
   for (const [name, msg] of Object.entries(errors)) html += `<div class="warn">${esc(name)}: ${esc(msg)}</div>`;
   sum.innerHTML = html;
@@ -155,10 +206,13 @@ function render(data) {
 
     const li = document.createElement("li");
     li.className = "card";
+    const [cls, label] = MATCH[p.match] || MATCH.type;
     li.innerHTML = `
       <div class="top"><span class="num">${n}</span><span class="name">${esc(p.name)}</span></div>
       <div class="meta"><span>${meta}</span></div>
       ${p.address ? `<div class="meta">${esc(p.address)}</div>` : ""}
+      <div class="check ${cls}">${label}${p.why ? `: ${esc(p.why)}` : ""}</div>
+      ${p.warnings.map((w) => `<div class="check maybe">${esc(w)}</div>`).join("")}
       <div class="links">${linksHtml(p)}</div>`;
     li.addEventListener("click", (e) => {
       if (e.target.closest("a")) return;

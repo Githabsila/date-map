@@ -66,8 +66,9 @@ RULES: dict[str, list[dict[str, list[str]]]] = {
     "антикафе": [{"search~": ["антикафе", "anticafe"]}],
     "торговый центр": [{"shop": ["mall"]}],
 }
-TOY_WORDS = ("фигур", "игруш", "кукл", "аниме", "hello kitty", "лего", "lego", "подар", "сувенир")
 TOY_SHOPS = ["toys", "gift", "games", "anime", "hobby", "model", "collector"]
+RULES["магазин игрушек"] = [{"shop": TOY_SHOPS}]
+TOY_WORDS = ("фигур", "игруш", "кукл", "аниме", "hello kitty", "лего", "lego", "подар", "сувенир")
 
 KINDS = {
     "restaurant": "Ресторан", "cafe": "Кафе", "fast_food": "Фастфуд", "bar": "Бар", "pub": "Паб",
@@ -174,6 +175,7 @@ def _search_sync(query: str, lat: float, lon: float, radius_m: int, limit: int =
             address=r["address"] or "",
             kind=KINDS.get(kind_key, kind_key.replace("_", " ")),
             phone=r["phone"] or "", website=r["website"] or "",
+            updated_year=r["updated"] if "updated" in r.keys() else None,
             sources=[Source(provider="osm", url=f"https://www.openstreetmap.org/{osm_type}/{r['id'][1:]}")],
         ))
     return places
@@ -195,3 +197,20 @@ def find_city(name: str) -> tuple[float, float] | None:
     finally:
         db.close()
     return (r["lat"], r["lon"]) if r else None
+
+
+def nearest_city(lat: float, lon: float) -> str | None:
+    """Ближайший к точке город или посёлок городского типа из своей базы."""
+    if not available():
+        return None
+    k = math.cos(math.radians(lat)) ** 2
+    db = _connect()
+    try:
+        r = db.execute(
+            "SELECT name FROM city WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ? "
+            "ORDER BY (lat-?)*(lat-?) + (lon-?)*(lon-?)*? LIMIT 1",
+            (lat - 1, lat + 1, lon - 2, lon + 2, lat, lat, lon, lon, k),
+        ).fetchone()
+    finally:
+        db.close()
+    return r["name"] if r else None

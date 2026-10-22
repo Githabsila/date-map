@@ -32,7 +32,7 @@ SCHEMA = """
 CREATE TABLE poi (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, lat REAL NOT NULL, lon REAL NOT NULL,
     amenity TEXT, shop TEXT, leisure TEXT, tourism TEXT, sport TEXT, cuisine TEXT,
-    address TEXT, website TEXT, phone TEXT, hours TEXT, search TEXT NOT NULL
+    address TEXT, website TEXT, phone TEXT, hours TEXT, search TEXT NOT NULL, updated INTEGER
 );
 CREATE TABLE city (name TEXT NOT NULL, key TEXT NOT NULL, lat REAL NOT NULL, lon REAL NOT NULL, population INTEGER);
 """
@@ -53,6 +53,14 @@ def wanted(tags) -> bool:
     if "name" in tags:
         return True
     return ("tourism", t) in UNNAMED_OK
+
+
+def updated_year(obj) -> int | None:
+    try:
+        y = obj.timestamp.year
+    except (AttributeError, ValueError):
+        return None
+    return y if y >= 2005 else None
 
 
 def center(obj):
@@ -86,6 +94,7 @@ def row(obj):
         tags.get("phone") or tags.get("contact:phone") or "",
         tags.get("opening_hours") or "",
         search,
+        updated_year(obj),
     )
 
 
@@ -111,10 +120,10 @@ def process(pbf: Path, db: sqlite3.Connection) -> tuple[int, int]:
         if r:
             batch.append(r)
         if len(batch) >= 5000:
-            db.executemany("INSERT OR REPLACE INTO poi VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", batch)
+            db.executemany("INSERT OR REPLACE INTO poi VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", batch)
             pois += len(batch)
             batch.clear()
-    db.executemany("INSERT OR REPLACE INTO poi VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", batch)
+    db.executemany("INSERT OR REPLACE INTO poi VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", batch)
     return pois + len(batch), cities
 
 

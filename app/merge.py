@@ -65,8 +65,12 @@ def merge_places(places: list[Place]) -> list[Place]:
     return merged
 
 
+MATCH_BONUS = {"exact": 1.0, "type": 0.0, "maybe": -0.8}
+
+
 def score(p: Place, budget_set: bool) -> float:
     s = p.rating if p.rating else 3.9
+    s += MATCH_BONUS[p.match]
     s += 0.15 * min(math.log10((p.reviews or 0) + 1), 3)
     s += 0.25 * (len(p.sources) - 1)  # место нашлось в нескольких картах — больше доверия
     s -= 0.04 * (p.distance_km or 0)
@@ -75,14 +79,23 @@ def score(p: Place, budget_set: bool) -> float:
     return s
 
 
-def rank(places: list[Place], lat: float, lon: float, max_price_level: int, limit: int = 40) -> list[Place]:
+def prepare(places: list[Place], lat: float, lon: float, max_price_level: int) -> list[Place]:
+    """Склейка дублей, фильтр бюджета, расстояние до центра поиска."""
     result = []
     for p in merge_places(places):
         if max_price_level and p.price_level and p.price_level > max_price_level:
             continue
         p.distance_km = round(distance_m(lat, lon, p.lat, p.lon) / 1000, 1)
         result.append(p)
-    result.sort(key=lambda p: score(p, bool(max_price_level)), reverse=True)
+    return result
+
+
+def rank(places: list[Place], lat: float, lon: float, max_price_level: int, limit: int = 40) -> list[Place]:
+    return order(prepare(places, lat, lon, max_price_level), bool(max_price_level), limit)
+
+
+def order(result: list[Place], budget_set: bool, limit: int = 40) -> list[Place]:
+    result = sorted(result, key=lambda p: score(p, budget_set), reverse=True)
     # Не больше двух филиалов одной сети в начале списка, остальные — в конец
     top, rest, seen = [], [], {}
     for p in result:

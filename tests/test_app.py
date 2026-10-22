@@ -1,4 +1,5 @@
 import asyncio
+from datetime import date
 
 import httpx
 from fastapi.testclient import TestClient
@@ -26,7 +27,7 @@ def test_meat_cheap():
 def test_buy_figure():
     p = plan("хочу купить фигурку хелоу китти")
     assert p.category == "shopping"
-    assert p.queries == ["фигурку хелоу китти"]
+    assert p.queries == ["фигурку хелоу китти", "магазин игрушек"]
 
 
 def test_budget_in_rubles():
@@ -242,4 +243,91 @@ def test_api_uses_osm_and_skips_paid_when_budget_spent(osm_db, monkeypatch):
     assert not r["demo"]
     assert r["providers"] == ["OpenStreetMap"]
     assert "2ГИС" in r["errors"]
+    assert [p["name"] for p in r["places"]] == ["Угли"]
+
+
+# --- перепроверка результатов ---
+
+from app.models import SearchPlan
+from app.verify import verify
+
+
+def _p(name, kind, lat=55.7558, lon=37.6173, provider="2gis", year=None, rating=None):
+    return Place(name=name, kind=kind, lat=lat, lon=lon, rating=rating, updated_year=year,
+                 sources=[Source(provider=provider, url="")])
+
+
+def test_verify_shopping_flags_cafe_and_confirms_shop():
+    plan = SearchPlan(queries=["фигурку hello kitty", "магазин игрушек"], category="shopping",
+                      max_price_level=0, summary="")
+    shop = _p("Hello Kitty Store", "Игрушки")
+    cafe = _p("Hello Kitty and friends", "Кафе")
+    toys = _p("Детский мир", "Магазин игрушек")
+    bank = _p("Сбербанк", "Банк")
+    kept, report = verify([shop, cafe, toys, bank], plan, 55.7558, 37.6173, 15000)
+    by = {p.name: p for p in kept}
+    assert by["Hello Kitty Store"].match == "exact"
+    assert by["Hello Kitty and friends"].match == "maybe"
+    assert "кафе, а не магазин" in by["Hello Kitty and friends"].warnings[0]
+    assert by["Детский мир"].match == "maybe" and "неизвестно" in by["Детский мир"].warnings[0]
+    assert "Сбербанк" not in by
+    assert report["removed"] == {"не подходит под запрос": 1}
+
+
+def test_verify_removes_far_and_wrong_type():
+    plan = SearchPlan(queries=["кинотеатр"], category="cinema", max_price_level=0, summary="")
+    ok = _p("Синема 5", "Кинотеатры")
+    far = _p("Киномакс", "Кинотеатр", lat=56.5)  # ~80 км от центра
+    wrong = _p("Кафе у кино", "Кафе")  # «кино» в названии, но рубрика — кафе
+    pizza = _p("Додо", "Пиццерия")
+    kept, report = verify([ok, far, wrong, pizza], plan, 55.7558, 37.6173, 15000)
+    names = [p.name for p in kept]
+    assert names == ["Синема 5"]
+    assert report["removed"] == {"далеко от выбранного места": 1, "не подходит под запрос": 2}
+
+
+def test_verify_warns_about_stale_osm_data():
+    plan = SearchPlan(queries=["парк"], category="park", max_price_level=0, summary="")
+    old = _p("Сквер", "Парк", provider="osm", year=2015)
+    fresh = _p("Парк Горького", "Парк", provider="osm", year=date.today().year)
+    kept, _ = verify([old, fresh], plan, 55.7558, 37.6173, 15000)
+    by = {p.name: p for p in kept}
+    assert "не обновлялись с 2015" in by["Сквер"].warnings[0]
+    assert by["Парк Горького"].warnings == []
+
+
+def test_nearest_city_and_api_reports_check(osm_db, monkeypatch):
+    from app.providers import osm
+    assert osm.nearest_city(55.76, 37.62) == "Москва"
+    for k in ("YANDEX_API_KEY", "TWOGIS_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY"):
+        monkeypatch.setattr(config, k, "")
+    from app.main import app
+    with TestClient(app) as c:
+        assert c.get("/api/nearest", params={"lat": 55.76, "lon": 37.62}).json() == {"city": "Москва"}
+        r = c.post("/api/search", json={"text": "стейк", "lat": 55.756, "lon": 37.617}).json()
+    assert r["center"]["name"] == "Москва"
+    assert r["check"]["kept"] == 1 and r["places"][0]["match"] == "type"
+
+
+def test_verify_drops_ticket_offices_and_flags_odd_descriptors():
+    plan = SearchPlan(queries=["кинотеатр"], category="cinema", max_price_level=0, summary="")
+    cinema = _p("Каро 8 Галерея, кинотеатр", "Кинотеатры")
+    kiosk = _p("Каро 8 Галерея, терминал по продаже кинобилетов", "Кинотеатры")
+    anticafe = _p("Учёбы.нет, антикафе", "Кинотеатры")
+    kept, report = verify([cinema, kiosk, anticafe], plan, 55.7558, 37.6173, 15000)
+    by = {p.name: p for p in kept}
+    assert by["Каро 8 Галерея, кинотеатр"].match == "type"
+    assert by["Учёбы.нет, антикафе"].match == "maybe"
+    assert "Каро 8 Галерея, терминал по продаже кинобилетов" not in by
+    assert report["removed"] == {"это не само место (касса, офис, аренда…)": 1}
+
+
+def test_search_widens_radius_when_nothing_near(osm_db, monkeypatch):
+    for k in ("YANDEX_API_KEY", "TWOGIS_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY"):
+        monkeypatch.setattr(config, k, "")
+    from app.main import app
+    with TestClient(app) as c:
+        # «Угли» в ~25 км от точки поиска: в радиусе 15 км нет, в 40 км — есть
+        r = c.post("/api/search", json={"text": "стейк", "lat": 55.98, "lon": 37.6173}).json()
+    assert r["check"]["widened_km"] == 40
     assert [p["name"] for p in r["places"]] == ["Угли"]

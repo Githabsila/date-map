@@ -111,6 +111,11 @@ input:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px
   color: var(--ink); text-decoration: none;
 }
 .links a:hover { background: var(--accent-soft); color: var(--accent); }
+.check { font-size: 13px; }
+.check.ok { color: var(--good); }
+.check.maybe { color: var(--warn); }
+.geo { font-size: 13px; color: var(--muted); margin-top: -6px; }
+.geo.warn { padding: 8px 10px; border-radius: 8px; background: var(--warn-soft); color: var(--warn); margin-top: 0; }
 .empty { color: var(--muted); padding: 20px 0; text-align: center; }
 
 .pin {

@@ -9,9 +9,10 @@ from fastapi.staticfiles import StaticFiles
 from . import config, limits
 from .cities import CITIES, resolve_city
 from .llm import llm_plan
-from .merge import rank
+from .merge import order, prepare
 from .models import SearchRequest
 from .parser import rule_based_plan
+from .verify import verify
 from .providers import PAID, cache, enabled_providers, osm
 
 logging.basicConfig(level=logging.INFO)
@@ -64,26 +65,8 @@ async def healthz():
     return {"ok": True, "provider_calls_today": limits.calls_today()}
 
 
-@app.post("/api/search")
-async def search(req: SearchRequest, request: Request):
-    assert http is not None
-    if not limits.allow_ip(client_ip(request)):
-        raise HTTPException(429, "Слишком много поисков подряд. Подожди несколько минут.")
-    if req.lat is not None and req.lon is not None:
-        lat, lon, radius = req.lat, req.lon, config.NEARBY_RADIUS_M
-    else:
-        coords = await resolve_city(req.city, http)
-        if coords is None:
-            raise HTTPException(404, f"Не нашёл город «{req.city}». Проверь название.")
-        lat, lon = coords
-        radius = config.CITY_RADIUS_M
-
-    plan = await llm_plan(req)
-    parser = "claude"
-    if plan is None:
-        plan = rule_based_plan(req)
-        parser = "rules"
-
+async def gather_places(plan, lat: float, lon: float, radius: int):
+    """Спрашивает все подключённые источники и собирает места; платные — в пределах дневного бюджета."""
     providers = enabled_providers()
     notes: dict[str, str] = {}
     uncached = sum(
@@ -115,14 +98,56 @@ async def search(req: SearchRequest, request: Request):
             errors[PROVIDER_NAMES[name]] = msg
         else:
             places += result
+    return places, errors, providers
+
+
+@app.get("/api/nearest")
+async def nearest(lat: float, lon: float):
+    return {"city": osm.nearest_city(lat, lon)}
+
+
+@app.post("/api/search")
+async def search(req: SearchRequest, request: Request):
+    assert http is not None
+    if not limits.allow_ip(client_ip(request)):
+        raise HTTPException(429, "Слишком много поисков подряд. Подожди несколько минут.")
+    if req.lat is not None and req.lon is not None:
+        lat, lon, radius = req.lat, req.lon, config.NEARBY_RADIUS_M
+        place_name = osm.nearest_city(lat, lon) or "рядом с вами"
+    else:
+        place_name = req.city
+        coords = await resolve_city(req.city, http)
+        if coords is None:
+            raise HTTPException(404, f"Не нашёл город «{req.city}». Проверь название.")
+        lat, lon = coords
+        radius = config.CITY_RADIUS_M
+
+    plan = await llm_plan(req)
+    parser = "claude"
+    if plan is None:
+        plan = rule_based_plan(req)
+        parser = "rules"
+
+    places, errors, providers = await gather_places(plan, lat, lon, radius)
+    # Перепроверка: только места рядом и по запросу, с объяснением «почему» и предупреждениями
+    checked, report = verify(prepare(places, lat, lon, plan.max_price_level), plan, lat, lon, radius)
+    if len(checked) < config.MIN_RESULTS and radius < config.WIDE_RADIUS_M:
+        # Рядом почти ничего — расширяем поиск, но честно говорим об этом
+        radius = config.WIDE_RADIUS_M
+        more, more_errors, providers = await gather_places(plan, lat, lon, radius)
+        errors.update(more_errors)
+        checked, report = verify(prepare(more, lat, lon, plan.max_price_level), plan, lat, lon, radius)
+        report["widened_km"] = radius // 1000
+    final = order(checked, bool(plan.max_price_level))
 
     return {
-        "center": {"lat": lat, "lon": lon, "radius_m": radius},
+        "center": {"lat": lat, "lon": lon, "radius_m": radius, "name": place_name},
+        "check": report,
         "plan": {**plan.model_dump(), "parser": parser},
         "demo": config.demo_mode(),
         "providers": [PROVIDER_NAMES[n] for n, _ in providers],
         "errors": errors,
-        "places": [p.model_dump() for p in rank(places, lat, lon, plan.max_price_level)],
+        "places": [p.model_dump(exclude={"updated_year"}) for p in final],
     }
 
 

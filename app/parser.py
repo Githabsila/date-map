@@ -154,6 +154,8 @@ def rule_based_plan(req: SearchRequest) -> SearchPlan:
         item = RUBLES.sub("", buy.group(1)).strip(" .,!?")
         queries.append(item)
         category = "shopping"
+        if any(w in item.lower() for w in ("фигур", "игруш", "кукл", "аниме", "лего", "lego", "kitty", "китти")):
+            queries.append("магазин игрушек")
     else:
         for root, phrases in FOOD_WORDS:
             if root in low:

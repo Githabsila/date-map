@@ -60,3 +60,8 @@ class Place(BaseModel):
     website: str = ""
     distance_km: float | None = None
     sources: list[Source] = []
+    updated_year: int | None = None  # когда данные OpenStreetMap последний раз правили
+    # Результат перепроверки: exact — точно то, что искали; type — подходящее место; maybe — уточните
+    match: Literal["exact", "type", "maybe"] = "type"
+    why: str = ""
+    warnings: list[str] = []
